@@ -403,21 +403,12 @@
         function getKey(q, r) { return `${q},${r}`; }
 
         // --- 3. WebSocket Connection ---
-        // Get API base path (handles /pirates prefix on custom domain)
-        function getApiBase() {
-            const path = window.location.pathname;
-            if (path.startsWith('/pirates')) {
-                return '/pirates/api';
-            }
-            return '/api';
-        }
-
         function connectToRoom(roomId) {
             state.roomId = roomId;
             updateConnectionStatus('connecting');
 
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${protocol}//${window.location.host}${getApiBase()}/rooms/${roomId}/ws`;
+            const wsUrl = `${protocol}//${window.location.host}/api/rooms/${roomId}/ws`;
 
             state.ws = new WebSocket(wsUrl);
 
@@ -499,7 +490,7 @@
             document.getElementById('lobby-status').textContent = 'Creating room...';
 
             try {
-                const res = await fetch(`${getApiBase()}/rooms`, { method: 'POST' });
+                const res = await fetch('/api/rooms', { method: 'POST' });
                 const data = await res.json();
 
                 state.roomId = data.roomId;

@@ -20,27 +20,27 @@ function generateRoomId(): string {
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
-    const isCustomDomain = url.hostname === 'games.joadn.com';
 
-    // Normalize pathname - strip /pirates prefix for routing
+    // Normalize pathname - strip /pirates prefix for all requests
     let normalizedPath = url.pathname;
     if (normalizedPath.startsWith('/pirates')) {
       normalizedPath = normalizedPath.slice('/pirates'.length) || '/';
     }
 
-    // API Routes (handles both /api/ and /pirates/api/)
+    // API Routes
     if (normalizedPath.startsWith('/api/')) {
       const apiUrl = new URL(request.url);
       apiUrl.pathname = normalizedPath;
       return handleAPI(request, env, apiUrl);
     }
 
-    // For workers.dev, redirect root to /pirates/
-    if (!isCustomDomain && url.pathname === '/') {
-      return Response.redirect(new URL('/pirates/', url).toString(), 302);
+    // Serve static files - rewrite path if it had /pirates prefix
+    if (normalizedPath !== url.pathname) {
+      const assetUrl = new URL(request.url);
+      assetUrl.pathname = normalizedPath;
+      return env.ASSETS.fetch(new Request(assetUrl, request));
     }
 
-    // Serve static files from ASSETS
     return env.ASSETS.fetch(request);
   },
 };
