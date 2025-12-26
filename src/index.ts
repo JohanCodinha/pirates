@@ -21,12 +21,28 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
+    // Strip /pirates prefix if present (for custom domain routing)
+    let pathname = url.pathname;
+    if (pathname.startsWith('/pirates')) {
+      pathname = pathname.slice('/pirates'.length) || '/';
+    }
+
     // API Routes
-    if (url.pathname.startsWith('/api/')) {
-      return handleAPI(request, env, url);
+    if (pathname.startsWith('/api/')) {
+      // Rewrite URL for API handling
+      const apiUrl = new URL(request.url);
+      apiUrl.pathname = pathname;
+      return handleAPI(request, env, apiUrl);
     }
 
     // Serve static files from ASSETS
+    // Rewrite the request to remove /pirates prefix
+    if (pathname !== url.pathname) {
+      const assetUrl = new URL(request.url);
+      assetUrl.pathname = pathname;
+      return env.ASSETS.fetch(new Request(assetUrl, request));
+    }
+
     return env.ASSETS.fetch(request);
   },
 };

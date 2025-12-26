@@ -2,10 +2,10 @@ name = "pirates-multiplayer"
 main = "src/index.ts"
 compatibility_date = "2024-12-26"
 
-# Custom domain route (uncomment after DNS is configured)
-# routes = [
-#   { pattern = "games.joadn.com/pirates/*", zone_name = "joadn.com" }
-# ]
+# Custom domain route
+routes = [
+  { pattern = "games.joadn.com/pirates/*", zone_name = "joadn.com" }
+]
 
 # Static assets
 assets = { directory = "public" }
