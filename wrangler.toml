@@ -10,7 +10,7 @@ assets = { directory = "public" }
 name = "GAME_ROOM"
 class_name = "GameRoom"
 
-# Durable Objects migration
+# Durable Objects migration (SQLite-backed for free plan)
 [[migrations]]
 tag = "v1"
-new_classes = ["GameRoom"]
+new_sqlite_classes = ["GameRoom"]
