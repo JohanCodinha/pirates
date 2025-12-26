@@ -20,29 +20,27 @@ function generateRoomId(): string {
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    const isCustomDomain = url.hostname === 'games.joadn.com';
 
-    // Strip /pirates prefix if present (for custom domain routing)
-    let pathname = url.pathname;
-    if (pathname.startsWith('/pirates')) {
-      pathname = pathname.slice('/pirates'.length) || '/';
+    // Normalize pathname - strip /pirates prefix for routing
+    let normalizedPath = url.pathname;
+    if (normalizedPath.startsWith('/pirates')) {
+      normalizedPath = normalizedPath.slice('/pirates'.length) || '/';
     }
 
-    // API Routes
-    if (pathname.startsWith('/api/')) {
-      // Rewrite URL for API handling
+    // API Routes (handles both /api/ and /pirates/api/)
+    if (normalizedPath.startsWith('/api/')) {
       const apiUrl = new URL(request.url);
-      apiUrl.pathname = pathname;
+      apiUrl.pathname = normalizedPath;
       return handleAPI(request, env, apiUrl);
     }
 
-    // Serve static files from ASSETS
-    // Rewrite the request to remove /pirates prefix
-    if (pathname !== url.pathname) {
-      const assetUrl = new URL(request.url);
-      assetUrl.pathname = pathname;
-      return env.ASSETS.fetch(new Request(assetUrl, request));
+    // For workers.dev, redirect root to /pirates/
+    if (!isCustomDomain && url.pathname === '/') {
+      return Response.redirect(new URL('/pirates/', url).toString(), 302);
     }
 
+    // Serve static files from ASSETS
     return env.ASSETS.fetch(request);
   },
 };
