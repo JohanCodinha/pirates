@@ -347,7 +347,9 @@
         const CONFIG = {
             hexSize: 32,
             mapRadius: 10,
-            landChance: 0.3
+            landChance: 0.3,
+            // API base path - derived from current URL (allows deployment at any path)
+            apiBase: window.location.pathname.replace(/\/$/, '')
         };
 
         const state = {
@@ -408,7 +410,7 @@
             updateConnectionStatus('connecting');
 
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${protocol}//${window.location.host}/api/rooms/${roomId}/ws`;
+            const wsUrl = `${protocol}//${window.location.host}${CONFIG.apiBase}/api/rooms/${roomId}/ws`;
 
             state.ws = new WebSocket(wsUrl);
 
@@ -490,7 +492,7 @@
             document.getElementById('lobby-status').textContent = 'Creating room...';
 
             try {
-                const res = await fetch('/api/rooms', { method: 'POST' });
+                const res = await fetch(`${CONFIG.apiBase}/api/rooms`, { method: 'POST' });
                 const data = await res.json();
 
                 state.roomId = data.roomId;
