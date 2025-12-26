@@ -21,26 +21,21 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
-    // Normalize pathname - strip /pirates prefix for all requests
-    let normalizedPath = url.pathname;
-    if (normalizedPath.startsWith('/pirates')) {
-      normalizedPath = normalizedPath.slice('/pirates'.length) || '/';
+    // Normalize API paths - strip /pirates prefix if present
+    // e.g., /pirates/api/rooms -> /api/rooms
+    let apiPath = url.pathname;
+    if (apiPath.startsWith('/pirates')) {
+      apiPath = apiPath.slice('/pirates'.length) || '/';
     }
 
     // API Routes
-    if (normalizedPath.startsWith('/api/')) {
+    if (apiPath.startsWith('/api/')) {
       const apiUrl = new URL(request.url);
-      apiUrl.pathname = normalizedPath;
+      apiUrl.pathname = apiPath;
       return handleAPI(request, env, apiUrl);
     }
 
-    // Serve static files - rewrite path if it had /pirates prefix
-    if (normalizedPath !== url.pathname) {
-      const assetUrl = new URL(request.url);
-      assetUrl.pathname = normalizedPath;
-      return env.ASSETS.fetch(assetUrl.toString());
-    }
-
+    // Static assets handled by Cloudflare's built-in asset routing
     return env.ASSETS.fetch(request);
   },
 };
