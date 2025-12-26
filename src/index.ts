@@ -38,7 +38,7 @@ export default {
     if (normalizedPath !== url.pathname) {
       const assetUrl = new URL(request.url);
       assetUrl.pathname = normalizedPath;
-      return env.ASSETS.fetch(new Request(assetUrl, request));
+      return env.ASSETS.fetch(assetUrl.toString());
     }
 
     return env.ASSETS.fetch(request);
