@@ -1,0 +1,16 @@
+name = "pirates-multiplayer"
+main = "src/index.ts"
+compatibility_date = "2024-12-26"
+
+# Static assets
+assets = { directory = "public" }
+
+# Durable Objects binding
+[[durable_objects.bindings]]
+name = "GAME_ROOM"
+class_name = "GameRoom"
+
+# Durable Objects migration
+[[migrations]]
+tag = "v1"
+new_classes = ["GameRoom"]

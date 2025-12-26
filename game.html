@@ -1,0 +1,937 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hex Grid Pathfinder (Decoupled)</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #0d1117;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: white;
+        }
+
+        /* --- UI Overlay --- */
+        #ui-layer {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            pointer-events: none;
+            z-index: 100;
+        }
+
+        .panel {
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 8px;
+            backdrop-filter: blur(5px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            pointer-events: auto;
+            max-width: 300px;
+        }
+
+        h1 { margin: 0 0 10px 0; font-size: 1.2rem; }
+        p { margin: 5px 0; font-size: 0.9rem; opacity: 0.8; }
+        .key {
+            display: inline-block;
+            background: #444;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-weight: bold;
+            border-bottom: 2px solid #222;
+        }
+
+        .control-group {
+            margin-top: 15px;
+            padding-top: 10px;
+            border-top: 1px solid rgba(255,255,255,0.2);
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        select, input[type="number"] {
+            background: #333;
+            border: 1px solid #555;
+            color: white;
+            padding: 5px;
+            border-radius: 4px;
+        }
+
+        /* --- Render Layers --- */
+        #game-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* SVG Mode Styles */
+        svg {
+            display: block;
+            width: 100%;
+            height: 100%;
+            cursor: crosshair;
+        }
+        .hex { stroke: rgba(0,0,0,0.1); stroke-width: 2px; transition: fill 0.2s, opacity 0.2s; }
+        .hex:hover { opacity: 0.8; stroke: white; stroke-width: 3px; }
+        .hex-water { fill: #4299e1; }
+        .hex-land { fill: #48bb78; }
+        .path-line {
+            fill: none; stroke: white; stroke-width: 4px; stroke-linecap: round;
+            stroke-linejoin: round; stroke-dasharray: 10; animation: dash 1s linear infinite;
+            pointer-events: none; filter: drop-shadow(0px 0px 3px rgba(0,0,0,0.5));
+        }
+        @keyframes dash { to { stroke-dashoffset: -20; } }
+
+        /* Canvas Styles */
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            cursor: crosshair;
+        }
+
+        /* Terminal (ASCII) Mode Styles */
+        #ascii-board {
+            margin: 0;
+            color: #ccc;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 14px;
+            line-height: 14px; 
+            white-space: pre;
+            cursor: crosshair;
+            user-select: none;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #0d1117;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        /* ASCII Color Classes */
+        .c-water { color: #3b82f6; }
+        .c-land { color: #22c55e; }
+        .c-boat { color: #ef4444; font-weight: bold; }
+        .c-path { color: #fbbf24; font-weight: bold; }
+        .c-dim { color: #666; }
+
+    </style>
+</head>
+<body>
+
+    <div id="ui-layer">
+        <div class="panel">
+            <h1>Engine Test</h1>
+            <p>Decoupling Rendering from Logic.</p>
+            
+            <div class="control-group">
+                <label>
+                    Renderer:
+                    <select id="renderer-select">
+                        <option value="terminal">Terminal (ASCII)</option>
+                        <option value="canvas">Canvas 3D</option>
+                        <option value="svg">Standard (SVG)</option>
+                    </select>
+                </label>
+                <label>
+                    Step Time (ms): 
+                    <input id="speed-input" type="number" value="500" min="50" step="50">
+                </label>
+            </div>
+            
+            <div style="margin-top: 10px; font-size: 0.8rem; color: #fbbf24;">
+                [SPACE]: Move<br>
+                [W,A,S,D]: Camera<br>
+                [Click]: Plan / Redirect
+            </div>
+
+            <p id="status" style="margin-top: 10px; font-weight: bold; border-top: 1px solid #444; padding-top: 5px;">Ready.</p>
+        </div>
+    </div>
+
+    <!-- Container for dynamic renderers -->
+    <div id="game-container"></div>
+
+    <script>
+        // --- 1. Game Configuration & State ---
+        const CONFIG = {
+            hexSize: 32,
+            mapRadius: 10,
+            landChance: 0.3
+        };
+
+        const state = {
+            map: new Map(), // Logic Data Only
+            camera: { x: window.innerWidth / 2, y: window.innerHeight / 2 },
+            boat: { q: 0, r: 0 }, 
+            
+            // Input
+            keys: { w: false, a: false, s: false, d: false },
+            
+            // Navigation
+            plannedPath: [],
+            nav: {
+                active: false,
+                queue: [],
+                startPos: null,
+                targetPos: null,
+                t: 0,
+                duration: 500
+            },
+            
+            renderer: null, 
+            lastTime: 0
+        };
+
+        // --- 2. Math & Logic Helpers ---
+        function hexToPixel(q, r) {
+            const x = CONFIG.hexSize * (Math.sqrt(3) * q + Math.sqrt(3)/2 * r);
+            const y = CONFIG.hexSize * (3./2 * r);
+            return { x, y };
+        }
+
+        function hexRound(q, r) {
+            let s = -q - r;
+            let rq = Math.round(q);
+            let rr = Math.round(r);
+            let rs = Math.round(s);
+
+            const q_diff = Math.abs(rq - q);
+            const r_diff = Math.abs(rr - r);
+            const s_diff = Math.abs(rs - s);
+
+            if (q_diff > r_diff && q_diff > s_diff) {
+                rq = -rr - rs;
+            } else if (r_diff > s_diff) {
+                rr = -rq - rs;
+            }
+            return { q: rq, r: rr };
+        }
+
+        function pixelToHex(x, y) {
+            const q = (Math.sqrt(3)/3 * x - 1./3 * y) / CONFIG.hexSize;
+            const r = (2./3 * y) / CONFIG.hexSize;
+            return hexRound(q, r);
+        }
+
+        function hexDistance(a, b) {
+            return (Math.abs(a.q - b.q) + Math.abs(a.q + a.r - b.q - b.r) + Math.abs(a.r - b.r)) / 2;
+        }
+
+        function getNeighbors(hex) {
+            return [
+                {q: 1, r: 0}, {q: 1, r: -1}, {q: 0, r: -1},
+                {q: -1, r: 0}, {q: -1, r: 1}, {q: 0, r: 1}
+            ].map(d => ({ q: hex.q + d.q, r: hex.r + d.r }));
+        }
+
+        function getKey(q, r) { return `${q},${r}`; }
+
+        /* --- 3. Renderers --- */
+
+        /**
+         * CanvasRenderer: 2.5D Isometric Style with Low Camera Angle
+         */
+        class CanvasRenderer {
+            constructor(containerId) {
+                this.container = document.getElementById(containerId);
+                this.canvas = document.createElement('canvas');
+                this.ctx = this.canvas.getContext('2d');
+                this.TILT = 0.5; // Scaling factor to flatten Y axis (simulates low camera angle)
+                this.resize();
+                window.addEventListener('resize', () => this.resize());
+
+                this.canvas.addEventListener('click', (e) => {
+                    const rect = this.canvas.getBoundingClientRect();
+                    const mx = e.clientX - rect.left;
+                    const my = e.clientY - rect.top;
+                    
+                    // Input correction:
+                    // 1. Un-translate camera
+                    // 2. Adjust for Z-height of water (we assume click is on base water level)
+                    // 3. Un-tilt the Y axis to get back to logical grid space
+                    const Z_OFFSET = 8; // Match water height
+                    
+                    const worldX = mx - state.camera.x;
+                    // Un-tilt: Divide by TILT
+                    const worldY = (my - state.camera.y + Z_OFFSET) / this.TILT; 
+                    
+                    const hex = pixelToHex(worldX, worldY);
+                    const tile = state.map.get(getKey(hex.q, hex.r));
+                    if (tile) handleInput(tile);
+                });
+            }
+
+            resize() {
+                this.canvas.width = window.innerWidth;
+                this.canvas.height = window.innerHeight;
+            }
+
+            init(mapData) {
+                this.container.innerHTML = '';
+                this.container.appendChild(this.canvas);
+            }
+
+            render(state) {
+                const ctx = this.ctx;
+                ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+                
+                ctx.save();
+                ctx.translate(state.camera.x, state.camera.y);
+                
+                // --- 1. Create Render List ---
+                const renderList = [];
+                
+                // 1a. Tiles
+                state.map.forEach(tile => {
+                    let score = tile.r * 10;
+                    if (tile.type === 'land') score += 2;
+                    
+                    renderList.push({
+                        type: 'TILE',
+                        obj: tile,
+                        zScore: score,
+                        q: tile.q 
+                    });
+                });
+
+                // 1b. Boat
+                const boatPos = getInterpolatedBoatPos(state);
+                const rawBoatR = boatPos.y / (CONFIG.hexSize * 1.5);
+                const rawBoatQ = (boatPos.x / (CONFIG.hexSize * Math.sqrt(3))) - (rawBoatR / 2);
+
+                const boatScore = (Math.floor(rawBoatR) + 1) * 10 + 1;
+
+                renderList.push({
+                    type: 'BOAT',
+                    obj: null, 
+                    zScore: boatScore,
+                    q: rawBoatQ
+                });
+
+                // 1c. Path Segments (Integrated into Depth Sort)
+                const pathNodes = state.nav.active ? state.nav.queue : state.plannedPath;
+                if (pathNodes.length > 0) {
+                    
+                    // Helper to add segment
+                    const addSegment = (q1, r1, q2, r2) => {
+                        // The segment belongs to the row closer to the camera (Max R)
+                        // to prevent the "front" tile from occluding the line drawn on top of it.
+                        // Score logic matches Boat: *10 + 1 puts it between Water(*10) and Land(*10+2).
+                        
+                        // Use Math.ceil for float coordinates (like boat) to snap to the visual row
+                        // Use direct value for integer coordinates.
+                        // Safe bet: Math.floor(Max) + 1 is roughly consistent with boat logic.
+                        // Static tile R=6. Boat R=5.5 (Floor=5, +1 -> 6).
+                        // Segment 5->6. Max=6.
+                        
+                        const maxR = Math.max(r1, r2);
+                        // If we are connecting to a float R (boat), we essentially snap to the integer grid row it overlaps
+                        const score = Math.ceil(maxR) * 10 + 1;
+
+                        renderList.push({
+                            type: 'PATH_SEGMENT',
+                            q1: q1, r1: r1,
+                            q2: q2, r2: r2,
+                            zScore: score,
+                            q: (q1 + q2) / 2
+                        });
+                    };
+
+                    // Dynamic Segment: Boat -> First Node
+                    addSegment(rawBoatQ, rawBoatR, pathNodes[0].q, pathNodes[0].r);
+
+                    // Static Segments: Node -> Node
+                    for (let i = 0; i < pathNodes.length - 1; i++) {
+                        addSegment(pathNodes[i].q, pathNodes[i].r, pathNodes[i+1].q, pathNodes[i+1].r);
+                    }
+                }
+
+                // --- 2. Sort ---
+                renderList.sort((a, b) => {
+                    return (a.zScore - b.zScore) || (a.q - b.q);
+                });
+
+                // --- 3. Draw ---
+                renderList.forEach(item => {
+                    if (item.type === 'TILE') {
+                        const tile = item.obj;
+                        const pos = hexToPixel(tile.q, tile.r);
+                        const screenX = pos.x;
+                        const screenY = pos.y * this.TILT;
+                        
+                        const height = tile.type === 'land' ? 20 : 8;
+                        this.drawHex3D(ctx, screenX, screenY, tile.type, height);
+                        
+                    } else if (item.type === 'BOAT') {
+                        this.drawBoat(ctx, boatPos.x, (boatPos.y * this.TILT) - 8);
+                        
+                    } else if (item.type === 'PATH_SEGMENT') {
+                        // Calculate pixel positions on the fly to apply TILT correctly
+                        const p1 = hexToPixel(item.q1, item.r1);
+                        const p2 = hexToPixel(item.q2, item.r2);
+                        
+                        const waterHeight = 8;
+                        
+                        ctx.beginPath();
+                        ctx.moveTo(p1.x, (p1.y * this.TILT) - waterHeight);
+                        ctx.lineTo(p2.x, (p2.y * this.TILT) - waterHeight);
+                        
+                        ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+                        ctx.lineWidth = 4;
+                        ctx.lineCap = 'round';
+                        ctx.setLineDash([10, 10]);
+                        // Animate dash
+                        ctx.lineDashOffset = -performance.now() / 20;
+                        ctx.stroke();
+                        ctx.setLineDash([]);
+                    }
+                });
+
+                ctx.restore();
+            }
+
+            drawHex3D(ctx, x, y, type, height) {
+                const size = CONFIG.hexSize;
+                let topColor, sideColor;
+                
+                if (type === 'water') {
+                    topColor = '#4299e1';
+                    sideColor = '#2b6cb0';
+                } else {
+                    topColor = '#48bb78';
+                    sideColor = '#2f855a';
+                }
+
+                // Calculate geometry
+                const getPoints = (cy) => {
+                    const pts = [];
+                    for (let i = 0; i < 6; i++) {
+                        const ang = Math.PI / 180 * (60 * i + 30); 
+                        pts.push({
+                            x: x + size * Math.cos(ang),
+                            // Apply Tilt to the shape itself so it matches grid compression
+                            y: cy + (size * Math.sin(ang) * this.TILT)
+                        });
+                    }
+                    return pts;
+                };
+
+                const basePts = getPoints(y);
+                const topPts = getPoints(y - height); // Extrude UP by height (unscaled)
+
+                // Draw Extrusion Sides (Front facing only: indices 0, 1, 2)
+                ctx.fillStyle = sideColor;
+                ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+                ctx.lineWidth = 1;
+
+                [0, 1, 2].forEach(i => {
+                    const nextI = (i + 1) % 6;
+                    ctx.beginPath();
+                    ctx.moveTo(topPts[i].x, topPts[i].y);
+                    ctx.lineTo(topPts[nextI].x, topPts[nextI].y);
+                    ctx.lineTo(basePts[nextI].x, basePts[nextI].y);
+                    ctx.lineTo(basePts[i].x, basePts[i].y);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.stroke(); 
+                });
+
+                // Draw Top Face
+                ctx.beginPath();
+                topPts.forEach((p, i) => {
+                    if(i===0) ctx.moveTo(p.x, p.y);
+                    else ctx.lineTo(p.x, p.y);
+                });
+                ctx.closePath();
+                ctx.fillStyle = topColor;
+                ctx.fill();
+                
+                // Highlight
+                ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+                ctx.stroke();
+            }
+
+            drawBoat(ctx, x, y) {
+                 ctx.save();
+                 ctx.translate(x, y);
+                 
+                 // Drop shadow
+                 ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                 ctx.beginPath(); 
+                 ctx.ellipse(0, 10 * this.TILT, 15, 5 * this.TILT, 0, 0, Math.PI*2);
+                 ctx.fill();
+
+                 // Trapezoid Hull
+                 ctx.beginPath(); 
+                 ctx.moveTo(-15, -5); 
+                 ctx.lineTo(15, -5); 
+                 ctx.lineTo(8, 12); 
+                 ctx.lineTo(-8, 12); 
+                 ctx.closePath(); 
+                 ctx.fillStyle = '#e53e3e'; ctx.fill(); // Red Hull
+                 
+                 ctx.beginPath(); ctx.moveTo(-2, -5); ctx.lineTo(-2, -35); ctx.lineTo(15, -5); ctx.closePath(); 
+                 ctx.fillStyle = '#fff'; ctx.fill(); // White Sail
+                 
+                 ctx.beginPath(); ctx.moveTo(-4, -5); ctx.lineTo(-4, -30); ctx.lineTo(-12, -5); ctx.closePath(); 
+                 ctx.fillStyle = '#cbd5e0'; ctx.fill(); // Grey Sail
+                 
+                 ctx.fillStyle = '#2d3748'; ctx.fillRect(-2, -35, 2, 30); // Mast
+                 ctx.restore();
+            }
+        }
+
+        /**
+         * SVGRenderer: Uses standard vector graphics.
+         */
+        class SVGRenderer {
+            constructor(containerId) {
+                this.container = document.getElementById(containerId);
+                this.svgNS = "http://www.w3.org/2000/svg";
+                this.root = null; this.cameraGroup = null; this.pathLayer = null; this.boatEl = null;
+            }
+            init(mapData) {
+                this.container.innerHTML = '';
+                this.root = document.createElementNS(this.svgNS, "svg");
+                const defs = document.createElementNS(this.svgNS, "defs");
+                const boatG = document.createElementNS(this.svgNS, "g");
+                boatG.id = "svg-boat-icon";
+                // Trapezoid Hull SVG Path: M-15,-5 L15,-5 L8,12 L-8,12 Z
+                boatG.innerHTML = `<path d="M-15,-5 L15,-5 L8,12 L-8,12 Z" fill="#e53e3e" /><path d="M-2,-5 L-2,-25 L15,-5 Z" fill="#fff" /><path d="M-4,-5 L-4,-20 L-12,-5 Z" fill="#cbd5e0" /><rect x="-2" y="-25" width="2" height="20" fill="#2d3748" />`;
+                defs.appendChild(boatG);
+                this.root.appendChild(defs);
+                this.cameraGroup = document.createElementNS(this.svgNS, "g");
+                const gridG = document.createElementNS(this.svgNS, "g");
+                mapData.forEach(tile => {
+                    const center = hexToPixel(tile.q, tile.r);
+                    const points = [];
+                    for (let i = 0; i < 6; i++) {
+                        const ang = Math.PI / 180 * (60 * i - 30);
+                        points.push(`${center.x + CONFIG.hexSize * Math.cos(ang)},${center.y + CONFIG.hexSize * Math.sin(ang)}`);
+                    }
+                    const poly = document.createElementNS(this.svgNS, "polygon");
+                    poly.setAttribute("points", points.join(" ")); poly.setAttribute("class", `hex hex-${tile.type}`);
+                    poly.onclick = () => handleInput(tile);
+                    gridG.appendChild(poly);
+                });
+                this.cameraGroup.appendChild(gridG);
+                this.pathLayer = document.createElementNS(this.svgNS, "path"); this.pathLayer.setAttribute("class", "path-line");
+                this.cameraGroup.appendChild(this.pathLayer);
+                const boatUse = document.createElementNS(this.svgNS, "use"); boatUse.setAttribute("href", "#svg-boat-icon"); boatUse.setAttribute("class", "boat");
+                this.boatEl = boatUse; this.cameraGroup.appendChild(boatUse);
+                this.root.appendChild(this.cameraGroup); this.container.appendChild(this.root);
+            }
+            render(state) {
+                this.cameraGroup.setAttribute('transform', `translate(${state.camera.x}, ${state.camera.y})`);
+                const boatPos = getInterpolatedBoatPos(state);
+                this.boatEl.setAttribute("transform", `translate(${boatPos.x}, ${boatPos.y})`);
+                const pathSource = state.nav.active ? state.nav.queue : state.plannedPath;
+                if (pathSource.length === 0) { this.pathLayer.setAttribute("d", ""); } else {
+                    let d = `M ${boatPos.x} ${boatPos.y}`;
+                    pathSource.forEach(node => { const px = hexToPixel(node.q, node.r); d += ` L ${px.x} ${px.y}`; });
+                    this.pathLayer.setAttribute("d", d);
+                }
+            }
+        }
+
+        /**
+         * TerminalRenderer: Pure ASCII text based rendering
+         */
+        class TerminalRenderer {
+            constructor(containerId) {
+                this.container = document.getElementById(containerId);
+                this.preElement = null;
+                this.charWidth = 8;
+                this.charHeight = 14; 
+                this.cols = 200; 
+                this.rows = 80;
+                this.buffer = [];
+                this.colorBuffer = [];
+            }
+
+            init(mapData) {
+                this.container.innerHTML = '';
+                this.preElement = document.createElement('pre');
+                this.preElement.id = "ascii-board";
+                this.container.appendChild(this.preElement);
+
+                const span = document.createElement('span');
+                span.textContent = "W";
+                span.style.visibility = 'hidden';
+                this.preElement.appendChild(span);
+                const rect = span.getBoundingClientRect();
+                this.charWidth = rect.width;
+                this.charHeight = rect.height;
+                this.preElement.removeChild(span);
+
+                this.preElement.addEventListener('click', (e) => {
+                    const rect = this.preElement.getBoundingClientRect();
+                    const mx = e.clientX - rect.left;
+                    const my = e.clientY - rect.top;
+                    
+                    const charCol = Math.floor(mx / this.charWidth);
+                    const charRow = Math.floor(my / this.charHeight);
+
+                    const charOffsetX = Math.floor(state.camera.x / this.charWidth);
+                    const charOffsetY = Math.floor(state.camera.y / this.charHeight);
+
+                    const dy = charRow - charOffsetY;
+                    const dx = charCol - charOffsetX;
+
+                    // Inverse Transform of x = 8q + 4r, y = 4r
+                    const r = Math.round(dy / 4);
+                    const q = Math.round((dx - 4 * r) / 8);
+
+                    // Candidate Search to handle edges
+                    const candidates = [
+                        {q: q, r: r},
+                        {q: q+1, r: r}, {q: q-1, r: r},
+                        {q: q, r: r+1}, {q: q, r: r-1},
+                        {q: q+1, r: r-1}, {q: q-1, r: r+1}
+                    ];
+
+                    let bestDist = Infinity;
+                    let bestHex = null;
+
+                    for (let c of candidates) {
+                        const cx = 8 * c.q + 4 * c.r;
+                        const cy = 4 * c.r; 
+                        const dx_c = (charCol - charOffsetX) - cx;
+                        const dy_c = (charRow - charOffsetY) - (cy + 0.5); 
+                        const dist = (dx_c * dx_c) + (dy_c * dy_c * 2.0); 
+
+                        if (dist < bestDist) {
+                            bestDist = dist;
+                            bestHex = c;
+                        }
+                    }
+
+                    if (bestHex) {
+                        const tile = state.map.get(getKey(bestHex.q, bestHex.r));
+                        if (tile) handleInput(tile);
+                    }
+                });
+            }
+
+            render(state) {
+                for (let y = 0; y < this.rows; y++) {
+                    this.buffer[y] = new Array(this.cols).fill(' ');
+                    this.colorBuffer[y] = new Array(this.cols).fill(null);
+                }
+
+                const offsetX = Math.floor(state.camera.x / this.charWidth);
+                const offsetY = Math.floor(state.camera.y / this.charHeight);
+
+                const waterTiles = [];
+                const landTiles = [];
+                state.map.forEach(tile => {
+                    if (tile.type === 'land') landTiles.push(tile);
+                    else waterTiles.push(tile);
+                });
+
+                waterTiles.forEach(tile => this.drawTileToBuffer(tile, offsetX, offsetY));
+                landTiles.forEach(tile => this.drawTileToBuffer(tile, offsetX, offsetY));
+
+                const pathSource = state.nav.active ? state.nav.queue : state.plannedPath;
+                pathSource.forEach(node => {
+                    const cx = 8 * node.q + 4 * node.r + offsetX;
+                    const cy = 4 * node.r + offsetY;
+                    this.drawText(cx - 1, cy + 1, "-*-", "c-path");
+                });
+
+                const boatQ = state.boat.q;
+                const boatR = state.boat.r;
+                const bx = 8 * boatQ + 4 * boatR + offsetX;
+                const by = 4 * boatR + offsetY;
+                this.drawText(bx - 1, by + 1, "-B-", "c-boat");
+
+                let html = "";
+                let currentColor = null;
+
+                for (let y = 0; y < this.rows; y++) {
+                    for (let x = 0; x < this.cols; x++) {
+                        const char = this.buffer[y][x];
+                        const color = this.colorBuffer[y][x];
+
+                        if (color !== currentColor) {
+                            if (currentColor) html += "</span>";
+                            if (color) html += `<span class="${color}">`;
+                            currentColor = color;
+                        }
+                        html += char;
+                    }
+                    html += "\n";
+                }
+                if (currentColor) html += "</span>";
+                
+                this.preElement.innerHTML = html;
+            }
+
+            drawTileToBuffer(tile, offsetX, offsetY) {
+                const cx = 8 * tile.q + 4 * tile.r + offsetX;
+                const cy = 4 * tile.r + offsetY;
+
+                if (cx > 5 && cx < this.cols - 10 && cy > 3 && cy < this.rows - 5) {
+                    this.drawHexShape(cx, cy, tile);
+                }
+            }
+
+            drawHexShape(cx, cy, tile) {
+                const color = tile.type === 'water' ? 'c-water' : 'c-land';
+                
+                this.drawText(cx - 1, cy - 2, "/ \\", color);
+                this.drawText(cx - 3, cy - 1, "/     \\", color);
+                
+                this.drawText(cx - 4, cy, "|", color);
+                this.drawText(cx + 4, cy, "|", color);
+                this.drawText(cx - 4, cy + 1, "|", color);
+                this.drawText(cx + 4, cy + 1, "|", color);
+
+                const coord = `${tile.q},${tile.r}`;
+                this.drawText(cx - Math.floor(coord.length/2), cy, coord, 'c-dim');
+
+                this.drawText(cx - 3, cy + 2, "\\     /", color);
+                this.drawText(cx - 1, cy + 3, "\\ /", color);
+            }
+
+            drawText(x, y, text, cssClass) {
+                if (y < 0 || y >= this.rows) return;
+                for (let i = 0; i < text.length; i++) {
+                    const tx = x + i;
+                    if (tx >= 0 && tx < this.cols) {
+                        this.buffer[y][tx] = text[i];
+                        this.colorBuffer[y][tx] = cssClass;
+                    }
+                }
+            }
+        }
+
+        // --- 4. Core Logic Helper: Interpolation ---
+        function getInterpolatedBoatPos(state) {
+            if (state.nav.active && state.nav.startPos && state.nav.targetPos) {
+                const t = Math.min(1, state.nav.t);
+                return {
+                    x: state.nav.startPos.x + (state.nav.targetPos.x - state.nav.startPos.x) * t,
+                    y: state.nav.startPos.y + (state.nav.targetPos.y - state.nav.startPos.y) * t
+                };
+            } else {
+                return hexToPixel(state.boat.q, state.boat.r);
+            }
+        }
+
+        // --- 5. Game Engine / Logic Layer ---
+
+        function generateMap() {
+            state.map.clear();
+            for (let q = -CONFIG.mapRadius; q <= CONFIG.mapRadius; q++) {
+                let r1 = Math.max(-CONFIG.mapRadius, -q - CONFIG.mapRadius);
+                let r2 = Math.min(CONFIG.mapRadius, -q + CONFIG.mapRadius);
+                for (let r = r1; r <= r2; r++) {
+                    let type = 'water';
+                    if (hexDistance({q:0, r:0}, {q, r}) > 1 && Math.random() < CONFIG.landChance) {
+                        type = 'land';
+                    }
+                    state.map.set(getKey(q, r), { q, r, type });
+                }
+            }
+        }
+
+        function findPath(start, target) {
+            const pq = []; 
+            const enqueue = (item, prio) => { pq.push({item, prio}); pq.sort((a,b)=>a.prio-b.prio); };
+            const dequeue = () => pq.shift().item;
+            
+            enqueue(start, 0);
+            const cameFrom = new Map();
+            const costSoFar = new Map();
+            const startKey = getKey(start.q, start.r);
+            
+            cameFrom.set(startKey, null);
+            costSoFar.set(startKey, 0);
+            
+            let closest = start;
+            let minDst = hexDistance(start, target);
+            let reached = false;
+
+            const targetTile = state.map.get(getKey(target.q, target.r));
+            const targetWalkable = targetTile && targetTile.type === 'water';
+
+            while (pq.length > 0) {
+                const current = dequeue();
+                const d = hexDistance(current, target);
+                if (d < minDst) { minDst = d; closest = current; }
+                if (current.q === target.q && current.r === target.r) { reached = true; break; }
+
+                for (let next of getNeighbors(current)) {
+                    const nextKey = getKey(next.q, next.r);
+                    const tile = state.map.get(nextKey);
+                    if (!tile || tile.type === 'land') continue;
+                    
+                    const newCost = costSoFar.get(getKey(current.q, current.r)) + 1;
+                    if (!costSoFar.has(nextKey) || newCost < costSoFar.get(nextKey)) {
+                        costSoFar.set(nextKey, newCost);
+                        enqueue(next, newCost + hexDistance(next, target));
+                        cameFrom.set(nextKey, current);
+                    }
+                }
+            }
+
+            let end = (reached && targetWalkable) ? target : closest;
+            const statusEl = document.getElementById('status');
+            
+            if (!state.nav.active) {
+                if (end.q === start.q && end.r === start.r) {
+                    statusEl.textContent = "Status: At loc / No path.";
+                    return [];
+                }
+                statusEl.textContent = (reached && targetWalkable) ? "Path found. SPACE to move." : "Blocked. Closest point.";
+            }
+
+            let path = [];
+            let curr = end;
+            while (curr && !(curr.q === start.q && curr.r === start.r)) {
+                path.push(curr);
+                curr = cameFrom.get(getKey(curr.q, curr.r));
+            }
+            return path.reverse();
+        }
+
+        // Main Game Loop (Tick)
+        function tick(timestamp) {
+            if (!state.lastTime) state.lastTime = timestamp;
+            const dt = timestamp - state.lastTime;
+            state.lastTime = timestamp;
+
+            // 1. Update Logic
+            updateLogic(dt);
+
+            // 2. Delegate Rendering
+            if (state.renderer) {
+                state.renderer.render(state);
+            }
+
+            requestAnimationFrame(tick);
+        }
+
+        function updateLogic(dt) {
+            // Camera
+            const camSpeed = 0.5 * dt;
+            if (state.keys.w) state.camera.y += camSpeed;
+            if (state.keys.s) state.camera.y -= camSpeed;
+            if (state.keys.a) state.camera.x += camSpeed;
+            if (state.keys.d) state.camera.x -= camSpeed;
+
+            // Navigation
+            if (state.nav.active) {
+                state.nav.t += dt / state.nav.duration;
+                if (state.nav.t >= 1) {
+                    const finishedNode = state.nav.queue.shift();
+                    state.boat = { q: finishedNode.q, r: finishedNode.r };
+                    
+                    if (state.nav.queue.length > 0) {
+                        state.nav.t = 0;
+                        state.nav.startPos = state.nav.targetPos;
+                        const nextNode = state.nav.queue[0];
+                        state.nav.targetPos = hexToPixel(nextNode.q, nextNode.r);
+                    } else {
+                        state.nav.active = false;
+                        document.getElementById('status').textContent = "Status: Reached.";
+                    }
+                }
+            }
+        }
+
+        // --- 6. Input Handling ---
+
+        function handleInput(tile) {
+            const target = { q: tile.q, r: tile.r };
+
+            if (state.nav.active) {
+                // Dynamic Re-routing
+                if (state.nav.queue.length > 0) {
+                    const currentTarget = state.nav.queue[0];
+                    if (currentTarget.q === target.q && currentTarget.r === target.r) {
+                         state.nav.queue = [currentTarget]; return;
+                    }
+                    const newPath = findPath(currentTarget, target);
+                    state.nav.queue = [currentTarget, ...newPath];
+                    document.getElementById('status').textContent = "Status: Re-routing...";
+                }
+                return;
+            }
+            
+            // Static Planning
+            const start = state.boat;
+            const path = findPath(start, target);
+            state.plannedPath = path;
+        }
+
+        function startNavigation() {
+            if (state.nav.active || state.plannedPath.length === 0) return;
+
+            const speedInput = document.getElementById('speed-input');
+            const duration = Math.max(50, parseInt(speedInput.value) || 1000);
+
+            state.nav.active = true;
+            state.nav.duration = duration;
+            state.nav.queue = [...state.plannedPath];
+            state.nav.t = 0;
+            state.nav.startPos = hexToPixel(state.boat.q, state.boat.r);
+            const firstTarget = state.nav.queue[0];
+            state.nav.targetPos = hexToPixel(firstTarget.q, firstTarget.r);
+            
+            state.plannedPath = [];
+            document.getElementById('status').textContent = "Status: Navigating...";
+        }
+
+        // --- 7. Initialization & Event Binding ---
+
+        function setRenderer(type) {
+            if (type === 'canvas') {
+                state.renderer = new CanvasRenderer('game-container');
+            } else if (type === 'svg') {
+                state.renderer = new SVGRenderer('game-container');
+            } else {
+                state.renderer = new TerminalRenderer('game-container');
+            }
+            state.renderer.init(state.map);
+        }
+
+        window.addEventListener('keydown', (e) => {
+            const key = e.key.toLowerCase();
+            if (key === ' ') startNavigation();
+            if (state.keys.hasOwnProperty(key)) state.keys[key] = true;
+        });
+
+        window.addEventListener('keyup', (e) => {
+            const key = e.key.toLowerCase();
+            if (state.keys.hasOwnProperty(key)) state.keys[key] = false;
+        });
+
+        document.getElementById('renderer-select').addEventListener('change', (e) => {
+            setRenderer(e.target.value);
+            document.body.focus();
+        });
+
+        window.onload = () => {
+            generateMap();
+            
+            // Set default renderer and sync UI
+            const defaultRenderer = 'canvas';
+            document.getElementById('renderer-select').value = defaultRenderer;
+            setRenderer(defaultRenderer); 
+            
+            requestAnimationFrame(tick);
+        };
+
+    </script>
+</body>
+</html>
