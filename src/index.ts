@@ -1,5 +1,4 @@
-// Main worker entry point
-// Handles static files, API routes, and exports the Durable Object
+// Worker entry point - handles static files and API routes
 
 export { GameRoom } from './game-room';
 
@@ -35,7 +34,7 @@ export default {
       return handleAPI(request, env, apiUrl);
     }
 
-    // Static assets handled by Cloudflare's built-in asset routing
+    // Static assets
     return env.ASSETS.fetch(request);
   },
 };
@@ -96,7 +95,7 @@ async function handleAPI(request: Request, env: Env, url: URL): Promise<Response
 
     try {
       const statusRes = await stub.fetch('https://room/status');
-      const status = await statusRes.json();
+      const status = await statusRes.json() as { players: number; maxPlayers: number };
       return new Response(JSON.stringify({ roomId, ...status }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
