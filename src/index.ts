@@ -20,6 +20,13 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
+    // Rewrite /pirates to /pirates/ internally (serve index.html without redirect)
+    if (url.pathname === '/pirates') {
+      const rewrittenUrl = new URL(request.url);
+      rewrittenUrl.pathname = '/pirates/';
+      return env.ASSETS.fetch(new Request(rewrittenUrl, request));
+    }
+
     // Normalize API paths - strip /pirates prefix if present
     // e.g., /pirates/api/rooms -> /api/rooms
     let apiPath = url.pathname;

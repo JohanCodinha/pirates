@@ -3,8 +3,9 @@ main = "src/index.ts"
 compatibility_date = "2024-12-26"
 workers_dev = true
 
-# Custom domain route
+# Custom domain routes (need both to match with and without trailing slash)
 routes = [
+  { pattern = "games.joadn.com/pirates", zone_name = "joadn.com" },
   { pattern = "games.joadn.com/pirates/*", zone_name = "joadn.com" }
 ]
 
