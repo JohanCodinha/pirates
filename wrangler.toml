@@ -12,12 +12,20 @@ routes = [
 # Static assets
 assets = { directory = "public" }
 
-# Durable Objects binding
+# Durable Objects bindings
 [[durable_objects.bindings]]
 name = "GAME_ROOM"
 class_name = "GameRoom"
+
+[[durable_objects.bindings]]
+name = "ROOM_REGISTRY"
+class_name = "RoomRegistry"
 
 # Durable Objects migration (SQLite-backed for free plan)
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["GameRoom"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["RoomRegistry"]

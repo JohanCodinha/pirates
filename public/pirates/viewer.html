@@ -1,0 +1,1181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pirates - Viewer Mode</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #0d1117;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: white;
+        }
+
+        /* Main layout */
+        #main-container {
+            display: flex;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #game-container {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+        }
+
+        #debug-panel {
+            width: 400px;
+            background: #161b22;
+            border-left: 1px solid #30363d;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* Debug panel sections */
+        .debug-header {
+            padding: 12px 16px;
+            background: #21262d;
+            border-bottom: 1px solid #30363d;
+            font-weight: bold;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .debug-header .badge {
+            background: #238636;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: normal;
+        }
+
+        .debug-header .badge.disconnected {
+            background: #da3633;
+        }
+
+        .debug-section {
+            border-bottom: 1px solid #30363d;
+        }
+
+        .debug-section-header {
+            padding: 8px 16px;
+            background: #21262d;
+            font-size: 12px;
+            color: #8b949e;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .debug-section-content {
+            padding: 8px;
+            font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+            font-size: 12px;
+            line-height: 1.5;
+            max-height: 180px;
+            overflow-y: auto;
+        }
+
+        /* State display */
+        .player-state {
+            padding: 6px 8px;
+            background: #21262d;
+            border-radius: 4px;
+            margin-bottom: 6px;
+            font-size: 11px;
+            line-height: 1.4;
+        }
+
+        .player-state.red {
+            border-left: 3px solid #e53e3e;
+        }
+
+        .player-state.blue {
+            border-left: 3px solid #3182ce;
+        }
+
+        .player-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2px;
+        }
+
+        .player-name {
+            font-weight: bold;
+            color: #e6edf3;
+        }
+
+        .player-status {
+            font-size: 10px;
+            padding: 1px 6px;
+            border-radius: 8px;
+            background: #238636;
+        }
+
+        .player-status.navigating {
+            background: #1f6feb;
+        }
+
+        .player-info {
+            color: #8b949e;
+        }
+
+        .player-info span {
+            color: #58a6ff;
+        }
+
+        .nav-plan {
+            margin-top: 4px;
+            padding: 4px 6px;
+            background: #161b22;
+            border-radius: 3px;
+            font-family: monospace;
+            font-size: 10px;
+            color: #7ee787;
+        }
+
+        /* Message log */
+        #message-log {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px;
+            font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+            font-size: 11px;
+        }
+
+        .log-entry {
+            padding: 6px 8px;
+            margin-bottom: 4px;
+            border-radius: 4px;
+            background: #21262d;
+        }
+
+        .log-entry.in {
+            border-left: 3px solid #f0883e;
+        }
+
+        .log-entry.out {
+            border-left: 3px solid #3fb950;
+        }
+
+        .log-time {
+            color: #8b949e;
+            font-size: 10px;
+        }
+
+        .log-direction {
+            font-weight: bold;
+            margin: 0 6px;
+        }
+
+        .log-direction.in {
+            color: #f0883e;
+        }
+
+        .log-direction.out {
+            color: #3fb950;
+        }
+
+        .log-type {
+            color: #d2a8ff;
+        }
+
+        .log-payload {
+            color: #8b949e;
+            margin-top: 4px;
+            word-break: break-all;
+        }
+
+        /* UI overlay */
+        #ui-layer {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            pointer-events: none;
+            z-index: 100;
+        }
+
+        .panel {
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 8px;
+            backdrop-filter: blur(5px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            pointer-events: auto;
+            max-width: 250px;
+        }
+
+        h1 { margin: 0 0 10px 0; font-size: 1.2rem; }
+        p { margin: 5px 0; font-size: 0.9rem; opacity: 0.8; }
+
+        .player-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .player-red { background: #e53e3e; }
+        .player-blue { background: #3182ce; }
+
+        .control-group {
+            margin-top: 15px;
+            padding-top: 10px;
+            border-top: 1px solid rgba(255,255,255,0.2);
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        select {
+            background: #333;
+            border: 1px solid #555;
+            color: white;
+            padding: 5px;
+            border-radius: 4px;
+        }
+
+        .viewer-badge {
+            display: inline-block;
+            background: #8957e5;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            margin-left: 8px;
+        }
+
+        /* Render layers */
+        svg {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        .hex { stroke: rgba(0,0,0,0.1); stroke-width: 2px; transition: fill 0.2s, opacity 0.2s; }
+        .hex-water { fill: #4299e1; }
+        .hex-land { fill: #48bb78; }
+        .path-line {
+            fill: none; stroke-width: 4px; stroke-linecap: round;
+            stroke-linejoin: round; stroke-dasharray: 10; animation: dash 1s linear infinite;
+            pointer-events: none; filter: drop-shadow(0px 0px 3px rgba(0,0,0,0.5));
+        }
+        .path-line-red { stroke: #e53e3e; }
+        .path-line-blue { stroke: #3182ce; }
+        @keyframes dash { to { stroke-dashoffset: -20; } }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        #ascii-board {
+            margin: 0;
+            color: #ccc;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 14px;
+            line-height: 14px;
+            white-space: pre;
+            user-select: none;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #0d1117;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        .c-water { color: #3b82f6; }
+        .c-land { color: #22c55e; }
+        .c-boat-red { color: #ef4444; font-weight: bold; }
+        .c-boat-blue { color: #3b82f6; font-weight: bold; }
+        .c-path-red { color: #fca5a5; }
+        .c-path-blue { color: #93c5fd; }
+        .c-dim { color: #666; }
+
+        /* Clear button */
+        .clear-btn {
+            background: #21262d;
+            border: 1px solid #30363d;
+            color: #8b949e;
+            padding: 4px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 11px;
+            margin-left: auto;
+        }
+
+        .clear-btn:hover {
+            background: #30363d;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div id="main-container">
+        <!-- Game View -->
+        <div id="game-container">
+            <div id="ui-layer">
+                <div class="panel">
+                    <h1>Pirates <span id="room-id-display"></span><span class="viewer-badge">VIEWER</span></h1>
+                    <div id="players-list"><p style="color: #8b949e;">No players connected</p></div>
+
+                    <div class="control-group">
+                        <label>
+                            Renderer:
+                            <select id="renderer-select">
+                                <option value="canvas">Canvas 3D</option>
+                                <option value="svg">Standard (SVG)</option>
+                                <option value="terminal">Terminal (ASCII)</option>
+                            </select>
+                        </label>
+                    </div>
+
+                    <div style="margin-top: 10px; font-size: 0.8rem; color: #fbbf24;">
+                        [W,A,S,D]: Camera
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Debug Panel -->
+        <div id="debug-panel">
+            <div class="debug-header">
+                Debug Monitor
+                <span class="badge disconnected" id="connection-badge">Disconnected</span>
+            </div>
+
+            <div class="debug-section">
+                <div class="debug-section-header">Current State</div>
+                <div class="debug-section-content" id="state-display">
+                    <p style="color: #8b949e;">Waiting for connection...</p>
+                </div>
+            </div>
+
+            <div class="debug-section" style="flex: 1; display: flex; flex-direction: column; overflow: hidden;">
+                <div class="debug-section-header" style="display: flex; align-items: center;">
+                    Message Log
+                    <button class="clear-btn" id="clear-log-btn">Clear</button>
+                </div>
+                <div id="message-log"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- Configuration & State ---
+        const CONFIG = {
+            hexSize: 32,
+            mapRadius: 10,
+            landChance: 0.3,
+            // API base path - strip /viewer from the path
+            apiBase: window.location.pathname.replace(/\/viewer(\.html)?\/?$/, '')
+        };
+
+        const state = {
+            ws: null,
+            roomId: null,
+            connected: false,
+            map: new Map(),
+            players: {},
+            localNav: {},
+            currentTime: 0,
+            camera: { x: 0, y: 0 },
+            keys: { w: false, a: false, s: false, d: false },
+            renderer: null,
+            lastTime: 0,
+            messageLog: []
+        };
+
+        // --- Extract room ID from URL query param ---
+        // Note: If no room param, server renders room list page instead
+        const urlParams = new URLSearchParams(window.location.search);
+        const roomId = urlParams.get('room');
+        if (!roomId) {
+            throw new Error('No room ID - server should have rendered room list');
+        }
+        state.roomId = roomId;
+
+        // --- Math & Logic Helpers ---
+        function hexToPixel(q, r) {
+            const x = CONFIG.hexSize * (Math.sqrt(3) * q + Math.sqrt(3)/2 * r);
+            const y = CONFIG.hexSize * (3./2 * r);
+            return { x, y };
+        }
+
+        function hexRound(q, r) {
+            let s = -q - r;
+            let rq = Math.round(q);
+            let rr = Math.round(r);
+            let rs = Math.round(s);
+            const q_diff = Math.abs(rq - q);
+            const r_diff = Math.abs(rr - r);
+            const s_diff = Math.abs(rs - s);
+            if (q_diff > r_diff && q_diff > s_diff) rq = -rr - rs;
+            else if (r_diff > s_diff) rr = -rq - rs;
+            return { q: rq, r: rr };
+        }
+
+        function pixelToHex(x, y) {
+            const q = (Math.sqrt(3)/3 * x - 1./3 * y) / CONFIG.hexSize;
+            const r = (2./3 * y) / CONFIG.hexSize;
+            return hexRound(q, r);
+        }
+
+        function getKey(q, r) { return `${q},${r}`; }
+
+        // --- Navigation Animation ---
+        function handleNavPlan(playerId, path, duration, fromPosition, elapsed) {
+            const player = state.players[playerId];
+            if (!player) return;
+
+            const now = performance.now();
+            const wasNavigating = !!state.localNav[playerId];
+            const currentVisualPos = wasNavigating
+                ? getInterpolatedBoatPos(player)
+                : hexToPixel(fromPosition.q, fromPosition.r);
+
+            player.boat = fromPosition;
+            state.localNav[playerId] = {
+                startHex: { q: fromPosition.q, r: fromPosition.r },
+                fullPath: [...path],
+                startTime: now - elapsed,
+                duration: duration,
+                blendFrom: wasNavigating ? currentVisualPos : null,
+                blendStartTime: now,
+                blendDuration: wasNavigating ? 150 : 0
+            };
+        }
+
+        function handleNavEnd(playerId, position) {
+            const player = state.players[playerId];
+            if (!player) return;
+            player.boat = position;
+            delete state.localNav[playerId];
+        }
+
+        function getPlayerPath(playerId) {
+            const localNav = state.localNav[playerId];
+            if (!localNav) return [];
+            const elapsed = state.currentTime - localNav.startTime;
+            const segmentIndex = Math.floor(elapsed / localNav.duration);
+            if (segmentIndex >= localNav.fullPath.length) return [];
+            return localNav.fullPath.slice(segmentIndex);
+        }
+
+        function getInterpolatedBoatPos(player) {
+            const localNav = state.localNav[player.id];
+            if (localNav && localNav.fullPath.length > 0) {
+                const elapsed = state.currentTime - localNav.startTime;
+                const duration = localNav.duration;
+                const totalProgress = elapsed / duration;
+                const segmentIndex = Math.floor(totalProgress);
+                const segmentT = totalProgress - segmentIndex;
+
+                let pathPos;
+                if (segmentIndex >= localNav.fullPath.length) {
+                    const last = localNav.fullPath[localNav.fullPath.length - 1];
+                    pathPos = hexToPixel(last.q, last.r);
+                } else {
+                    const fromHex = segmentIndex === 0 ? localNav.startHex : localNav.fullPath[segmentIndex - 1];
+                    const toHex = localNav.fullPath[segmentIndex];
+                    const startPos = hexToPixel(fromHex.q, fromHex.r);
+                    const targetPos = hexToPixel(toHex.q, toHex.r);
+                    pathPos = {
+                        x: startPos.x + (targetPos.x - startPos.x) * segmentT,
+                        y: startPos.y + (targetPos.y - startPos.y) * segmentT
+                    };
+                }
+
+                if (localNav.blendFrom && localNav.blendDuration > 0) {
+                    const blendElapsed = state.currentTime - localNav.blendStartTime;
+                    const blendT = Math.min(1, blendElapsed / localNav.blendDuration);
+                    const easedT = 1 - Math.pow(1 - blendT, 2);
+                    return {
+                        x: localNav.blendFrom.x + (pathPos.x - localNav.blendFrom.x) * easedT,
+                        y: localNav.blendFrom.y + (pathPos.y - localNav.blendFrom.y) * easedT
+                    };
+                }
+                return pathPos;
+            }
+            return hexToPixel(player.boat.q, player.boat.r);
+        }
+
+        // --- WebSocket Connection ---
+        function connect() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}${CONFIG.apiBase}/api/view/${state.roomId}/ws`;
+
+            console.log('[Viewer] Connecting to:', wsUrl);
+            console.log('[Viewer] Room ID:', state.roomId, 'API Base:', CONFIG.apiBase);
+
+            state.ws = new WebSocket(wsUrl);
+
+            state.ws.onopen = () => {
+                console.log('[Viewer] WebSocket connected');
+                updateConnectionStatus(true);
+            };
+
+            state.ws.onmessage = (event) => {
+                const msg = JSON.parse(event.data);
+                console.log('[Viewer] Received message:', msg.type,
+                    msg.type === 'init' ? `(players: ${Object.keys(msg.state.players).length}, seed: ${msg.state.mapSeed})` : '');
+                handleServerMessage(msg);
+            };
+
+            state.ws.onclose = (event) => {
+                console.log('[Viewer] WebSocket closed:', event.code, event.reason);
+                state.connected = false;
+                updateConnectionStatus(false);
+                setTimeout(connect, 3000);
+            };
+
+            state.ws.onerror = (err) => {
+                console.error('[Viewer] WebSocket error:', err);
+            };
+        }
+
+        function handleServerMessage(msg) {
+            switch (msg.type) {
+                case 'init':
+                    state.connected = true;
+                    state.map.clear();
+                    for (const [key, tile] of Object.entries(msg.state.tiles)) {
+                        state.map.set(key, tile);
+                    }
+                    state.players = msg.state.players;
+                    startGame();
+                    updatePlayersUI();
+                    updateStateDisplay();
+                    break;
+
+                case 'playerJoined':
+                    state.players[msg.playerId] = {
+                        id: msg.playerId,
+                        color: msg.color,
+                        boat: msg.boat,
+                        navPlan: null
+                    };
+                    updatePlayersUI();
+                    updateStateDisplay();
+                    break;
+
+                case 'playerLeft':
+                    if (state.players[msg.playerId]) {
+                        delete state.players[msg.playerId];
+                        delete state.localNav[msg.playerId];
+                    }
+                    updatePlayersUI();
+                    updateStateDisplay();
+                    break;
+
+                case 'navPlan':
+                    handleNavPlan(msg.playerId, msg.path, msg.duration, msg.fromPosition, msg.elapsed);
+                    updateStateDisplay();
+                    break;
+
+                case 'navEnd':
+                    handleNavEnd(msg.playerId, msg.position);
+                    updateStateDisplay();
+                    break;
+
+                case 'debug':
+                    addLogEntry(msg.direction, msg.payload, msg.timestamp);
+                    break;
+            }
+        }
+
+        // --- Debug Panel Updates ---
+        function updateConnectionStatus(connected) {
+            const badge = document.getElementById('connection-badge');
+            badge.textContent = connected ? 'Connected' : 'Disconnected';
+            badge.className = 'badge' + (connected ? '' : ' disconnected');
+        }
+
+        function updatePlayersUI() {
+            const list = document.getElementById('players-list');
+            const playerCount = Object.keys(state.players).length;
+
+            if (playerCount === 0) {
+                list.innerHTML = '<p style="color: #8b949e;">No players connected</p>';
+                return;
+            }
+
+            let html = '';
+            for (const player of Object.values(state.players)) {
+                html += `<p><span class="player-indicator player-${player.color}"></span>${player.color.charAt(0).toUpperCase() + player.color.slice(1)}</p>`;
+            }
+            list.innerHTML = html;
+        }
+
+        function updateStateDisplay() {
+            const display = document.getElementById('state-display');
+            const playerCount = Object.keys(state.players).length;
+
+            if (playerCount === 0) {
+                display.innerHTML = '<p style="color: #8b949e;">No players in room</p>';
+                return;
+            }
+
+            let html = '';
+            for (const player of Object.values(state.players)) {
+                const localNav = state.localNav[player.id];
+                const isNavigating = !!localNav;
+                const path = getPlayerPath(player.id);
+
+                html += `
+                    <div class="player-state ${player.color}">
+                        <div class="player-header">
+                            <span class="player-name">${player.color.toUpperCase()}</span>
+                            <span class="player-status ${isNavigating ? 'navigating' : ''}">${isNavigating ? 'Moving' : 'Idle'}</span>
+                        </div>
+                        <div class="player-info">pos: <span>(${player.boat.q}, ${player.boat.r})</span></div>
+                `;
+
+                if (isNavigating && localNav) {
+                    const dest = localNav.fullPath[localNav.fullPath.length - 1];
+                    const pathStr = path.slice(0, 3).map(p => `${p.q},${p.r}`).join(' → ');
+                    const remaining = path.length > 3 ? ` → ...(${path.length - 3} more)` : '';
+                    html += `
+                        <div class="nav-plan">
+                            → ${pathStr}${remaining}<br>
+                            dest: (${dest.q}, ${dest.r}) | ${path.length} tiles | ${localNav.duration}ms/tile
+                        </div>
+                    `;
+                }
+
+                html += '</div>';
+            }
+            display.innerHTML = html;
+        }
+
+        function addLogEntry(direction, payload, timestamp) {
+            const log = document.getElementById('message-log');
+            const time = new Date(timestamp).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 });
+
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${direction}`;
+
+            const payloadStr = JSON.stringify(payload, null, 0);
+            const truncated = payloadStr.length > 200 ? payloadStr.slice(0, 200) + '...' : payloadStr;
+
+            entry.innerHTML = `
+                <span class="log-time">${time}</span>
+                <span class="log-direction ${direction}">${direction === 'in' ? '→' : '←'}</span>
+                <span class="log-type">${payload.type || 'unknown'}</span>
+                <div class="log-payload">${truncated}</div>
+            `;
+
+            log.appendChild(entry);
+            log.scrollTop = log.scrollHeight;
+
+            // Keep max 200 entries
+            while (log.children.length > 200) {
+                log.removeChild(log.firstChild);
+            }
+        }
+
+        // --- Game Start ---
+        function startGame() {
+            document.getElementById('room-id-display').textContent = `[${state.roomId}]`;
+
+            // Center camera
+            const container = document.getElementById('game-container');
+            state.camera.x = container.clientWidth / 2;
+            state.camera.y = container.clientHeight / 2;
+
+            // Initialize renderer
+            const defaultRenderer = 'canvas';
+            document.getElementById('renderer-select').value = defaultRenderer;
+            setRenderer(defaultRenderer);
+
+            requestAnimationFrame(tick);
+        }
+
+        // --- Renderers (same as main game, but read-only) ---
+        class CanvasRenderer {
+            constructor(containerId) {
+                this.container = document.getElementById(containerId);
+                this.canvas = document.createElement('canvas');
+                this.ctx = this.canvas.getContext('2d');
+                this.TILT = 0.5;
+                this.resize();
+                window.addEventListener('resize', () => this.resize());
+            }
+
+            resize() {
+                const rect = this.container.getBoundingClientRect();
+                this.canvas.width = rect.width;
+                this.canvas.height = rect.height;
+            }
+
+            init(mapData) {
+                this.container.innerHTML = '';
+                this.container.appendChild(this.canvas);
+            }
+
+            render(gameState) {
+                const ctx = this.ctx;
+                ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+                ctx.save();
+                ctx.translate(state.camera.x, state.camera.y);
+
+                const renderList = [];
+
+                state.map.forEach(tile => {
+                    let score = tile.r * 10;
+                    if (tile.type === 'land') score += 2;
+                    renderList.push({ type: 'TILE', obj: tile, zScore: score, q: tile.q });
+                });
+
+                for (const player of Object.values(state.players)) {
+                    const boatPos = getInterpolatedBoatPos(player);
+                    const rawBoatR = boatPos.y / (CONFIG.hexSize * 1.5);
+                    const rawBoatQ = (boatPos.x / (CONFIG.hexSize * Math.sqrt(3))) - (rawBoatR / 2);
+                    const boatScore = (Math.floor(rawBoatR) + 1) * 10 + 1;
+
+                    renderList.push({
+                        type: 'BOAT',
+                        player: player,
+                        boatPos: boatPos,
+                        zScore: boatScore,
+                        q: rawBoatQ
+                    });
+
+                    const pathNodes = getPlayerPath(player.id);
+                    if (pathNodes && pathNodes.length > 0) {
+                        const addSegment = (x1, y1, q2, r2) => {
+                            const maxR = Math.max(y1 / (CONFIG.hexSize * 1.5), r2);
+                            const score = Math.ceil(maxR) * 10 + 1;
+                            renderList.push({
+                                type: 'PATH_SEGMENT',
+                                color: player.color,
+                                x1, y1, q2, r2,
+                                zScore: score,
+                                q: (x1 / (CONFIG.hexSize * Math.sqrt(3)) + q2) / 2
+                            });
+                        };
+
+                        addSegment(boatPos.x, boatPos.y, pathNodes[0].q, pathNodes[0].r);
+                        for (let i = 0; i < pathNodes.length - 1; i++) {
+                            const p1 = hexToPixel(pathNodes[i].q, pathNodes[i].r);
+                            addSegment(p1.x, p1.y, pathNodes[i+1].q, pathNodes[i+1].r);
+                        }
+                    }
+                }
+
+                renderList.sort((a, b) => (a.zScore - b.zScore) || (a.q - b.q));
+
+                renderList.forEach(item => {
+                    if (item.type === 'TILE') {
+                        const tile = item.obj;
+                        const pos = hexToPixel(tile.q, tile.r);
+                        const screenX = pos.x;
+                        const screenY = pos.y * this.TILT;
+                        const height = tile.type === 'land' ? 20 : 8;
+                        this.drawHex3D(ctx, screenX, screenY, tile.type, height);
+                    } else if (item.type === 'BOAT') {
+                        this.drawBoat(ctx, item.boatPos.x, (item.boatPos.y * this.TILT) - 8, item.player.color);
+                    } else if (item.type === 'PATH_SEGMENT') {
+                        const p2 = hexToPixel(item.q2, item.r2);
+                        const waterHeight = 8;
+                        ctx.beginPath();
+                        ctx.moveTo(item.x1, (item.y1 * this.TILT) - waterHeight);
+                        ctx.lineTo(p2.x, (p2.y * this.TILT) - waterHeight);
+                        ctx.strokeStyle = item.color === 'red' ? 'rgba(229, 62, 62, 0.9)' : 'rgba(49, 130, 206, 0.9)';
+                        ctx.lineWidth = 4;
+                        ctx.lineCap = 'round';
+                        ctx.setLineDash([10, 10]);
+                        ctx.lineDashOffset = -performance.now() / 20;
+                        ctx.stroke();
+                        ctx.setLineDash([]);
+                    }
+                });
+
+                ctx.restore();
+            }
+
+            drawHex3D(ctx, x, y, type, height) {
+                const size = CONFIG.hexSize;
+                let topColor, sideColor;
+                if (type === 'water') {
+                    topColor = '#4299e1';
+                    sideColor = '#2b6cb0';
+                } else {
+                    topColor = '#48bb78';
+                    sideColor = '#2f855a';
+                }
+
+                const getPoints = (cy) => {
+                    const pts = [];
+                    for (let i = 0; i < 6; i++) {
+                        const ang = Math.PI / 180 * (60 * i + 30);
+                        pts.push({
+                            x: x + size * Math.cos(ang),
+                            y: cy + (size * Math.sin(ang) * this.TILT)
+                        });
+                    }
+                    return pts;
+                };
+
+                const basePts = getPoints(y);
+                const topPts = getPoints(y - height);
+
+                ctx.fillStyle = sideColor;
+                ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+                ctx.lineWidth = 1;
+
+                [0, 1, 2].forEach(i => {
+                    const nextI = (i + 1) % 6;
+                    ctx.beginPath();
+                    ctx.moveTo(topPts[i].x, topPts[i].y);
+                    ctx.lineTo(topPts[nextI].x, topPts[nextI].y);
+                    ctx.lineTo(basePts[nextI].x, basePts[nextI].y);
+                    ctx.lineTo(basePts[i].x, basePts[i].y);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.stroke();
+                });
+
+                ctx.beginPath();
+                topPts.forEach((p, i) => {
+                    if(i===0) ctx.moveTo(p.x, p.y);
+                    else ctx.lineTo(p.x, p.y);
+                });
+                ctx.closePath();
+                ctx.fillStyle = topColor;
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+                ctx.stroke();
+            }
+
+            drawBoat(ctx, x, y, color) {
+                ctx.save();
+                ctx.translate(x, y);
+                ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                ctx.beginPath();
+                ctx.ellipse(0, 10 * this.TILT, 15, 5 * this.TILT, 0, 0, Math.PI*2);
+                ctx.fill();
+
+                ctx.beginPath();
+                ctx.moveTo(-15, -5);
+                ctx.lineTo(15, -5);
+                ctx.lineTo(8, 12);
+                ctx.lineTo(-8, 12);
+                ctx.closePath();
+                ctx.fillStyle = color === 'red' ? '#e53e3e' : '#3182ce';
+                ctx.fill();
+
+                ctx.beginPath();
+                ctx.moveTo(-2, -5);
+                ctx.lineTo(-2, -35);
+                ctx.lineTo(15, -5);
+                ctx.closePath();
+                ctx.fillStyle = '#fff';
+                ctx.fill();
+
+                ctx.beginPath();
+                ctx.moveTo(-4, -5);
+                ctx.lineTo(-4, -30);
+                ctx.lineTo(-12, -5);
+                ctx.closePath();
+                ctx.fillStyle = '#cbd5e0';
+                ctx.fill();
+
+                ctx.fillStyle = '#2d3748';
+                ctx.fillRect(-2, -35, 2, 30);
+                ctx.restore();
+            }
+        }
+
+        class SVGRenderer {
+            constructor(containerId) {
+                this.container = document.getElementById(containerId);
+                this.svgNS = "http://www.w3.org/2000/svg";
+                this.root = null;
+                this.cameraGroup = null;
+                this.pathLayers = {};
+                this.boatEls = {};
+            }
+
+            init(mapData) {
+                this.container.innerHTML = '';
+                this.root = document.createElementNS(this.svgNS, "svg");
+
+                const defs = document.createElementNS(this.svgNS, "defs");
+                const redBoatG = document.createElementNS(this.svgNS, "g");
+                redBoatG.id = "svg-boat-red";
+                redBoatG.innerHTML = `<path d="M-15,-5 L15,-5 L8,12 L-8,12 Z" fill="#e53e3e" /><path d="M-2,-5 L-2,-25 L15,-5 Z" fill="#fff" /><path d="M-4,-5 L-4,-20 L-12,-5 Z" fill="#cbd5e0" /><rect x="-2" y="-25" width="2" height="20" fill="#2d3748" />`;
+                defs.appendChild(redBoatG);
+
+                const blueBoatG = document.createElementNS(this.svgNS, "g");
+                blueBoatG.id = "svg-boat-blue";
+                blueBoatG.innerHTML = `<path d="M-15,-5 L15,-5 L8,12 L-8,12 Z" fill="#3182ce" /><path d="M-2,-5 L-2,-25 L15,-5 Z" fill="#fff" /><path d="M-4,-5 L-4,-20 L-12,-5 Z" fill="#cbd5e0" /><rect x="-2" y="-25" width="2" height="20" fill="#2d3748" />`;
+                defs.appendChild(blueBoatG);
+
+                this.root.appendChild(defs);
+                this.cameraGroup = document.createElementNS(this.svgNS, "g");
+                const gridG = document.createElementNS(this.svgNS, "g");
+
+                state.map.forEach(tile => {
+                    const center = hexToPixel(tile.q, tile.r);
+                    const points = [];
+                    for (let i = 0; i < 6; i++) {
+                        const ang = Math.PI / 180 * (60 * i - 30);
+                        points.push(`${center.x + CONFIG.hexSize * Math.cos(ang)},${center.y + CONFIG.hexSize * Math.sin(ang)}`);
+                    }
+                    const poly = document.createElementNS(this.svgNS, "polygon");
+                    poly.setAttribute("points", points.join(" "));
+                    poly.setAttribute("class", `hex hex-${tile.type}`);
+                    gridG.appendChild(poly);
+                });
+
+                this.cameraGroup.appendChild(gridG);
+                this.root.appendChild(this.cameraGroup);
+                this.container.appendChild(this.root);
+            }
+
+            render(gameState) {
+                this.cameraGroup.setAttribute('transform', `translate(${state.camera.x}, ${state.camera.y})`);
+
+                for (const player of Object.values(state.players)) {
+                    if (!this.pathLayers[player.id]) {
+                        const pathEl = document.createElementNS(this.svgNS, "path");
+                        pathEl.setAttribute("class", `path-line path-line-${player.color}`);
+                        this.cameraGroup.appendChild(pathEl);
+                        this.pathLayers[player.id] = pathEl;
+                    }
+
+                    if (!this.boatEls[player.id]) {
+                        const boatUse = document.createElementNS(this.svgNS, "use");
+                        boatUse.setAttribute("href", `#svg-boat-${player.color}`);
+                        this.cameraGroup.appendChild(boatUse);
+                        this.boatEls[player.id] = boatUse;
+                    }
+
+                    const boatPos = getInterpolatedBoatPos(player);
+                    this.boatEls[player.id].setAttribute("transform", `translate(${boatPos.x}, ${boatPos.y})`);
+
+                    const pathNodes = getPlayerPath(player.id);
+                    if (!pathNodes || pathNodes.length === 0) {
+                        this.pathLayers[player.id].setAttribute("d", "");
+                    } else {
+                        let d = `M ${boatPos.x} ${boatPos.y}`;
+                        pathNodes.forEach(node => {
+                            const px = hexToPixel(node.q, node.r);
+                            d += ` L ${px.x} ${px.y}`;
+                        });
+                        this.pathLayers[player.id].setAttribute("d", d);
+                    }
+                }
+
+                for (const playerId of Object.keys(this.pathLayers)) {
+                    if (!state.players[playerId]) {
+                        this.pathLayers[playerId].remove();
+                        delete this.pathLayers[playerId];
+                    }
+                }
+                for (const playerId of Object.keys(this.boatEls)) {
+                    if (!state.players[playerId]) {
+                        this.boatEls[playerId].remove();
+                        delete this.boatEls[playerId];
+                    }
+                }
+            }
+        }
+
+        class TerminalRenderer {
+            constructor(containerId) {
+                this.container = document.getElementById(containerId);
+                this.preElement = null;
+                this.charWidth = 8;
+                this.charHeight = 14;
+                this.cols = 150;
+                this.rows = 80;
+                this.buffer = [];
+                this.colorBuffer = [];
+            }
+
+            init(mapData) {
+                this.container.innerHTML = '';
+                this.preElement = document.createElement('pre');
+                this.preElement.id = "ascii-board";
+                this.container.appendChild(this.preElement);
+
+                const span = document.createElement('span');
+                span.textContent = "W";
+                span.style.visibility = 'hidden';
+                this.preElement.appendChild(span);
+                const rect = span.getBoundingClientRect();
+                this.charWidth = rect.width;
+                this.charHeight = rect.height;
+                this.preElement.removeChild(span);
+            }
+
+            render(gameState) {
+                for (let y = 0; y < this.rows; y++) {
+                    this.buffer[y] = new Array(this.cols).fill(' ');
+                    this.colorBuffer[y] = new Array(this.cols).fill(null);
+                }
+
+                const offsetX = Math.floor(state.camera.x / this.charWidth);
+                const offsetY = Math.floor(state.camera.y / this.charHeight);
+
+                const waterTiles = [];
+                const landTiles = [];
+                state.map.forEach(tile => {
+                    if (tile.type === 'land') landTiles.push(tile);
+                    else waterTiles.push(tile);
+                });
+
+                waterTiles.forEach(tile => this.drawTileToBuffer(tile, offsetX, offsetY));
+                landTiles.forEach(tile => this.drawTileToBuffer(tile, offsetX, offsetY));
+
+                for (const player of Object.values(state.players)) {
+                    const pathNodes = getPlayerPath(player.id);
+                    const pathClass = `c-path-${player.color}`;
+
+                    if (pathNodes && pathNodes.length > 0) {
+                        pathNodes.forEach(node => {
+                            const cx = 8 * node.q + 4 * node.r + offsetX;
+                            const cy = 4 * node.r + offsetY;
+                            this.drawText(cx - 1, cy + 1, "-*-", pathClass);
+                        });
+                    }
+
+                    const boatPos = getInterpolatedBoatPos(player);
+                    const boatHex = pixelToHex(boatPos.x, boatPos.y);
+                    const boatChar = player.color === 'red' ? 'R' : 'B';
+                    const bx = 8 * boatHex.q + 4 * boatHex.r + offsetX;
+                    const by = 4 * boatHex.r + offsetY;
+                    this.drawText(bx - 1, by + 1, `-${boatChar}-`, `c-boat-${player.color}`);
+                }
+
+                let html = "";
+                let currentColor = null;
+
+                for (let y = 0; y < this.rows; y++) {
+                    for (let x = 0; x < this.cols; x++) {
+                        const char = this.buffer[y][x];
+                        const color = this.colorBuffer[y][x];
+                        if (color !== currentColor) {
+                            if (currentColor) html += "</span>";
+                            if (color) html += `<span class="${color}">`;
+                            currentColor = color;
+                        }
+                        html += char;
+                    }
+                    html += "\n";
+                }
+                if (currentColor) html += "</span>";
+                this.preElement.innerHTML = html;
+            }
+
+            drawTileToBuffer(tile, offsetX, offsetY) {
+                const cx = 8 * tile.q + 4 * tile.r + offsetX;
+                const cy = 4 * tile.r + offsetY;
+                if (cx > 5 && cx < this.cols - 10 && cy > 3 && cy < this.rows - 5) {
+                    this.drawHexShape(cx, cy, tile);
+                }
+            }
+
+            drawHexShape(cx, cy, tile) {
+                const color = tile.type === 'water' ? 'c-water' : 'c-land';
+                this.drawText(cx - 1, cy - 2, "/ \\", color);
+                this.drawText(cx - 3, cy - 1, "/     \\", color);
+                this.drawText(cx - 4, cy, "|", color);
+                this.drawText(cx + 4, cy, "|", color);
+                this.drawText(cx - 4, cy + 1, "|", color);
+                this.drawText(cx + 4, cy + 1, "|", color);
+                const coord = `${tile.q},${tile.r}`;
+                this.drawText(cx - Math.floor(coord.length/2), cy, coord, 'c-dim');
+                this.drawText(cx - 3, cy + 2, "\\     /", color);
+                this.drawText(cx - 1, cy + 3, "\\ /", color);
+            }
+
+            drawText(x, y, text, cssClass) {
+                if (y < 0 || y >= this.rows) return;
+                for (let i = 0; i < text.length; i++) {
+                    const tx = x + i;
+                    if (tx >= 0 && tx < this.cols) {
+                        this.buffer[y][tx] = text[i];
+                        this.colorBuffer[y][tx] = cssClass;
+                    }
+                }
+            }
+        }
+
+        // --- Game Loop ---
+        let lastStateUpdate = 0;
+        function tick(timestamp) {
+            if (!state.lastTime) state.lastTime = timestamp;
+            const dt = timestamp - state.lastTime;
+            state.lastTime = timestamp;
+            state.currentTime = timestamp;
+
+            updateCamera(dt);
+
+            if (state.renderer) {
+                state.renderer.render(state);
+            }
+
+            // Update state display every 200ms for smooth nav plan updates
+            if (timestamp - lastStateUpdate > 200) {
+                updateStateDisplay();
+                lastStateUpdate = timestamp;
+            }
+
+            requestAnimationFrame(tick);
+        }
+
+        function updateCamera(dt) {
+            const camSpeed = 0.5 * dt;
+            if (state.keys.w) state.camera.y += camSpeed;
+            if (state.keys.s) state.camera.y -= camSpeed;
+            if (state.keys.a) state.camera.x += camSpeed;
+            if (state.keys.d) state.camera.x -= camSpeed;
+        }
+
+        function setRenderer(type) {
+            if (type === 'canvas') {
+                state.renderer = new CanvasRenderer('game-container');
+            } else if (type === 'svg') {
+                state.renderer = new SVGRenderer('game-container');
+            } else {
+                state.renderer = new TerminalRenderer('game-container');
+            }
+            state.renderer.init(state.map);
+        }
+
+        // --- Event Listeners ---
+        window.addEventListener('keydown', (e) => {
+            const key = e.key.toLowerCase();
+            if (state.keys.hasOwnProperty(key)) state.keys[key] = true;
+        });
+
+        window.addEventListener('keyup', (e) => {
+            const key = e.key.toLowerCase();
+            if (state.keys.hasOwnProperty(key)) state.keys[key] = false;
+        });
+
+        document.getElementById('renderer-select').addEventListener('change', (e) => {
+            setRenderer(e.target.value);
+        });
+
+        document.getElementById('clear-log-btn').addEventListener('click', () => {
+            document.getElementById('message-log').innerHTML = '';
+        });
+
+        // --- Start ---
+        connect();
+    </script>
+</body>
+</html>
