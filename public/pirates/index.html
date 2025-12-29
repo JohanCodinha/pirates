@@ -323,10 +323,6 @@
                         <option value="terminal">Terminal (ASCII)</option>
                     </select>
                 </label>
-                <label>
-                    Step Time (ms):
-                    <input id="speed-input" type="number" value="500" min="50" step="50">
-                </label>
             </div>
 
             <div style="margin-top: 10px; font-size: 0.8rem; color: #fbbf24;">
@@ -362,6 +358,13 @@
             // Game state (received from server)
             map: new Map(),
             players: {},
+
+            // Local animation state per player (for smooth client-side interpolation)
+            // { playerId: { startHex, fullPath, startTime, duration, blendFrom?, blendStartTime?, blendDuration? } }
+            localNav: {},
+
+            // Current frame timestamp (set in tick)
+            currentTime: 0,
 
             // Local camera
             camera: { x: window.innerWidth / 2, y: window.innerHeight / 2 },
@@ -403,6 +406,122 @@
         }
 
         function getKey(q, r) { return `${q},${r}`; }
+
+        // --- Local Navigation Animation Handlers ---
+
+        // Handle navPlan: server sent a new navigation plan
+        function handleNavPlan(playerId, path, duration, fromPosition, elapsed) {
+            const player = state.players[playerId];
+            if (!player) return;
+
+            const now = performance.now();
+
+            // Capture current visual position for blending (if already navigating)
+            const wasNavigating = !!state.localNav[playerId];
+            const currentVisualPos = wasNavigating
+                ? getInterpolatedBoatPos(player)
+                : hexToPixel(fromPosition.q, fromPosition.r);
+
+            // Update player's boat position to match server
+            player.boat = fromPosition;
+
+            // Set up local animation
+            // Subtract elapsed time so animation continues from correct point in segment
+            state.localNav[playerId] = {
+                startHex: { q: fromPosition.q, r: fromPosition.r },
+                fullPath: [...path],
+                startTime: now - elapsed,
+                duration: duration,
+                blendFrom: wasNavigating ? currentVisualPos : null,
+                blendStartTime: now,
+                blendDuration: wasNavigating ? 150 : 0  // Blend only if rerouting
+            };
+        }
+
+        // Handle navEnd: navigation completed
+        function handleNavEnd(playerId, position) {
+            const player = state.players[playerId];
+            if (!player) return;
+
+            // Update player state
+            player.boat = position;
+
+            // Clear local animation
+            delete state.localNav[playerId];
+        }
+
+        // Get the current path for a player (from localNav)
+        function getPlayerPath(playerId) {
+            const localNav = state.localNav[playerId];
+            if (!localNav) return [];
+
+            // Return remaining path from current position
+            const elapsed = state.currentTime - localNav.startTime;
+            const segmentIndex = Math.floor(elapsed / localNav.duration);
+
+            if (segmentIndex >= localNav.fullPath.length) {
+                return [];
+            }
+
+            return localNav.fullPath.slice(segmentIndex);
+        }
+
+        // Shared interpolation function using local timestamps
+        // Animates through the full queue, not just one tile at a time
+        // Handles smooth blending during reroutes
+        function getInterpolatedBoatPos(player) {
+            const localNav = state.localNav[player.id];
+
+            if (localNav && localNav.fullPath.length > 0) {
+                const elapsed = state.currentTime - localNav.startTime;
+                const duration = localNav.duration;
+
+                // Calculate which segment we're on and progress within it
+                const totalProgress = elapsed / duration;
+                const segmentIndex = Math.floor(totalProgress);
+                const segmentT = totalProgress - segmentIndex;
+
+                // Calculate path position
+                let pathPos;
+                if (segmentIndex >= localNav.fullPath.length) {
+                    // Past all segments, sit at the final position
+                    const last = localNav.fullPath[localNav.fullPath.length - 1];
+                    pathPos = hexToPixel(last.q, last.r);
+                } else {
+                    // Get current segment start and end
+                    const fromHex = segmentIndex === 0
+                        ? localNav.startHex
+                        : localNav.fullPath[segmentIndex - 1];
+                    const toHex = localNav.fullPath[segmentIndex];
+
+                    const startPos = hexToPixel(fromHex.q, fromHex.r);
+                    const targetPos = hexToPixel(toHex.q, toHex.r);
+
+                    pathPos = {
+                        x: startPos.x + (targetPos.x - startPos.x) * segmentT,
+                        y: startPos.y + (targetPos.y - startPos.y) * segmentT
+                    };
+                }
+
+                // Handle blending during reroutes
+                if (localNav.blendFrom && localNav.blendDuration > 0) {
+                    const blendElapsed = state.currentTime - localNav.blendStartTime;
+                    const blendT = Math.min(1, blendElapsed / localNav.blendDuration);
+
+                    // Ease out for smoother blend
+                    const easedT = 1 - Math.pow(1 - blendT, 2);
+
+                    return {
+                        x: localNav.blendFrom.x + (pathPos.x - localNav.blendFrom.x) * easedT,
+                        y: localNav.blendFrom.y + (pathPos.y - localNav.blendFrom.y) * easedT
+                    };
+                }
+
+                return pathPos;
+            }
+
+            return hexToPixel(player.boat.q, player.boat.r);
+        }
 
         // --- 3. WebSocket Connection ---
         function connectToRoom(roomId) {
@@ -457,6 +576,13 @@
                     break;
 
                 case 'playerJoined':
+                    // Add new player to state
+                    state.players[msg.playerId] = {
+                        id: msg.playerId,
+                        color: msg.color,
+                        boat: msg.boat,
+                        navPlan: null
+                    };
                     document.getElementById('status').textContent = 'Player 2 joined!';
                     updatePlayersUI();
                     break;
@@ -469,8 +595,13 @@
                     updatePlayersUI();
                     break;
 
-                case 'stateUpdate':
-                    state.players = msg.players;
+                case 'navPlan':
+                    handleNavPlan(msg.playerId, msg.path, msg.duration, msg.fromPosition, msg.elapsed);
+                    updateStatusFromPlayer();
+                    break;
+
+                case 'navEnd':
+                    handleNavEnd(msg.playerId, msg.position);
                     updateStatusFromPlayer();
                     break;
 
@@ -557,13 +688,8 @@
             if (!player) return;
 
             const statusEl = document.getElementById('status');
-            if (player.nav.active) {
-                statusEl.textContent = 'Navigating...';
-            } else if (player.plannedPath.length > 0) {
-                statusEl.textContent = 'Path planned. SPACE to move.';
-            } else {
-                statusEl.textContent = 'Click to plan path.';
-            }
+            const isNavigating = !!state.localNav[state.playerId];
+            statusEl.textContent = isNavigating ? 'Navigating...' : 'Click to navigate.';
         }
 
         // --- 5. Renderers ---
@@ -623,7 +749,7 @@
 
                 // All players' boats and paths
                 for (const player of Object.values(state.players)) {
-                    const boatPos = this.getInterpolatedBoatPos(player);
+                    const boatPos = getInterpolatedBoatPos(player);
                     const rawBoatR = boatPos.y / (CONFIG.hexSize * 1.5);
                     const rawBoatQ = (boatPos.x / (CONFIG.hexSize * Math.sqrt(3))) - (rawBoatR / 2);
                     const boatScore = (Math.floor(rawBoatR) + 1) * 10 + 1;
@@ -636,24 +762,26 @@
                         q: rawBoatQ
                     });
 
-                    // Path segments
-                    const pathNodes = player.nav.active ? player.nav.queue : player.plannedPath;
+                    // Path segments (remaining path from current position)
+                    const pathNodes = getPlayerPath(player.id);
                     if (pathNodes && pathNodes.length > 0) {
-                        const addSegment = (q1, r1, q2, r2) => {
-                            const maxR = Math.max(r1, r2);
+                        const addSegment = (x1, y1, q2, r2) => {
+                            const maxR = Math.max(y1 / (CONFIG.hexSize * 1.5), r2);
                             const score = Math.ceil(maxR) * 10 + 1;
                             renderList.push({
                                 type: 'PATH_SEGMENT',
                                 color: player.color,
-                                q1, r1, q2, r2,
+                                x1, y1, q2, r2,
                                 zScore: score,
-                                q: (q1 + q2) / 2
+                                q: (x1 / (CONFIG.hexSize * Math.sqrt(3)) + q2) / 2
                             });
                         };
 
-                        addSegment(rawBoatQ, rawBoatR, pathNodes[0].q, pathNodes[0].r);
+                        // Draw from current visual position to next waypoint
+                        addSegment(boatPos.x, boatPos.y, pathNodes[0].q, pathNodes[0].r);
                         for (let i = 0; i < pathNodes.length - 1; i++) {
-                            addSegment(pathNodes[i].q, pathNodes[i].r, pathNodes[i+1].q, pathNodes[i+1].r);
+                            const p1 = hexToPixel(pathNodes[i].q, pathNodes[i].r);
+                            addSegment(p1.x, p1.y, pathNodes[i+1].q, pathNodes[i+1].r);
                         }
                     }
                 }
@@ -671,12 +799,11 @@
                     } else if (item.type === 'BOAT') {
                         this.drawBoat(ctx, item.boatPos.x, (item.boatPos.y * this.TILT) - 8, item.player.color);
                     } else if (item.type === 'PATH_SEGMENT') {
-                        const p1 = hexToPixel(item.q1, item.r1);
                         const p2 = hexToPixel(item.q2, item.r2);
                         const waterHeight = 8;
 
                         ctx.beginPath();
-                        ctx.moveTo(p1.x, (p1.y * this.TILT) - waterHeight);
+                        ctx.moveTo(item.x1, (item.y1 * this.TILT) - waterHeight);
                         ctx.lineTo(p2.x, (p2.y * this.TILT) - waterHeight);
 
                         ctx.strokeStyle = item.color === 'red' ? 'rgba(229, 62, 62, 0.9)' : 'rgba(49, 130, 206, 0.9)';
@@ -690,19 +817,6 @@
                 });
 
                 ctx.restore();
-            }
-
-            getInterpolatedBoatPos(player) {
-                if (player.nav.active && player.nav.queue && player.nav.queue.length > 0) {
-                    const t = Math.min(1, player.nav.t);
-                    const startPos = hexToPixel(player.boat.q, player.boat.r);
-                    const targetPos = hexToPixel(player.nav.queue[0].q, player.nav.queue[0].r);
-                    return {
-                        x: startPos.x + (targetPos.x - startPos.x) * t,
-                        y: startPos.y + (targetPos.y - startPos.y) * t
-                    };
-                }
-                return hexToPixel(player.boat.q, player.boat.r);
             }
 
             drawHex3D(ctx, x, y, type, height) {
@@ -877,16 +991,16 @@
                     }
 
                     // Update boat position
-                    const boatPos = this.getInterpolatedBoatPos(player);
+                    const boatPos = getInterpolatedBoatPos(player);
                     this.boatEls[player.id].setAttribute("transform", `translate(${boatPos.x}, ${boatPos.y})`);
 
-                    // Update path
-                    const pathSource = player.nav.active ? player.nav.queue : player.plannedPath;
-                    if (!pathSource || pathSource.length === 0) {
+                    // Update path (remaining path from current position)
+                    const pathNodes = getPlayerPath(player.id);
+                    if (!pathNodes || pathNodes.length === 0) {
                         this.pathLayers[player.id].setAttribute("d", "");
                     } else {
                         let d = `M ${boatPos.x} ${boatPos.y}`;
-                        pathSource.forEach(node => {
+                        pathNodes.forEach(node => {
                             const px = hexToPixel(node.q, node.r);
                             d += ` L ${px.x} ${px.y}`;
                         });
@@ -907,19 +1021,6 @@
                         delete this.boatEls[playerId];
                     }
                 }
-            }
-
-            getInterpolatedBoatPos(player) {
-                if (player.nav.active && player.nav.queue && player.nav.queue.length > 0) {
-                    const t = Math.min(1, player.nav.t);
-                    const startPos = hexToPixel(player.boat.q, player.boat.r);
-                    const targetPos = hexToPixel(player.nav.queue[0].q, player.nav.queue[0].r);
-                    return {
-                        x: startPos.x + (targetPos.x - startPos.x) * t,
-                        y: startPos.y + (targetPos.y - startPos.y) * t
-                    };
-                }
-                return hexToPixel(player.boat.q, player.boat.r);
             }
         }
 
@@ -1019,20 +1120,23 @@
 
                 // Draw all players' paths and boats
                 for (const player of Object.values(state.players)) {
-                    const pathSource = player.nav.active ? player.nav.queue : player.plannedPath;
+                    const pathNodes = getPlayerPath(player.id);
                     const pathClass = `c-path-${player.color}`;
 
-                    if (pathSource) {
-                        pathSource.forEach(node => {
+                    if (pathNodes && pathNodes.length > 0) {
+                        pathNodes.forEach(node => {
                             const cx = 8 * node.q + 4 * node.r + offsetX;
                             const cy = 4 * node.r + offsetY;
                             this.drawText(cx - 1, cy + 1, "-*-", pathClass);
                         });
                     }
 
+                    // Get interpolated boat position
+                    const boatPos = getInterpolatedBoatPos(player);
+                    const boatHex = pixelToHex(boatPos.x, boatPos.y);
                     const boatChar = player.color === 'red' ? 'R' : 'B';
-                    const bx = 8 * player.boat.q + 4 * player.boat.r + offsetX;
-                    const by = 4 * player.boat.r + offsetY;
+                    const bx = 8 * boatHex.q + 4 * boatHex.r + offsetX;
+                    const by = 4 * boatHex.r + offsetY;
                     this.drawText(bx - 1, by + 1, `-${boatChar}-`, `c-boat-${player.color}`);
                 }
 
@@ -1102,6 +1206,7 @@
             if (!state.lastTime) state.lastTime = timestamp;
             const dt = timestamp - state.lastTime;
             state.lastTime = timestamp;
+            state.currentTime = timestamp;
 
             updateCamera(dt);
 
@@ -1125,14 +1230,6 @@
             sendMessage({ type: 'click', q: tile.q, r: tile.r });
         }
 
-        function startNavigation() {
-            const speedInput = document.getElementById('speed-input');
-            const duration = Math.max(50, parseInt(speedInput.value) || 500);
-
-            sendMessage({ type: 'setSpeed', duration });
-            sendMessage({ type: 'move' });
-        }
-
         function setRenderer(type) {
             if (type === 'canvas') {
                 state.renderer = new CanvasRenderer('game-container');
@@ -1147,10 +1244,6 @@
         // --- 8. Event Listeners ---
         window.addEventListener('keydown', (e) => {
             const key = e.key.toLowerCase();
-            if (key === ' ') {
-                e.preventDefault();
-                startNavigation();
-            }
             if (state.keys.hasOwnProperty(key)) state.keys[key] = true;
         });
 
